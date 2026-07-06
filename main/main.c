@@ -23,6 +23,7 @@ static sys_state current_state = SYSTEM_IDLE; // Reso accessibile al task LED
 static bool udp_tasks_created = false;
 static QueueHandle_t queueRx;
 static QueueHandle_t queueTx;
+static QueueHandle_t queueHuart;
 
 static void event_handler(void* arg, esp_event_base_t event_base,
                             int32_t event_id, void* event_data)
@@ -104,8 +105,9 @@ void app_main(void)
         ESP_LOGI(TAG, "Connessione stabilita. Avvio stack UDP...");
     		current_state = SYSTEM_CONNECTED;
 
-        queueRx = xQueueCreate(10, sizeof(msg_t));
-        queueTx = xQueueCreate(10, sizeof(msg_t));
+        queueRx = xQueueCreate(70, sizeof(msg_t));
+        queueTx = xQueueCreate(70, sizeof(msg_t));
+		queueHuart = xQueueCreate(30, sizeof(msg_t));
 
         if (queueRx == NULL || queueTx == NULL) {
             ESP_LOGE(TAG, "Errore nella creazione delle code UART");
@@ -142,7 +144,7 @@ void app_main(void)
 
                 udp_start_tasks(args_send, args_recv);
 				vTaskDelay(pdMS_TO_TICKS(1000));
-				setting_uart_trx(queueRx, queueTx);
+				setting_uart_trx(queueRx, queueTx, queueHuart);
                 udp_tasks_created = true;
 				while (1){
 					invio_pacchetto_test(queueTx);

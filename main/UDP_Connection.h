@@ -10,8 +10,9 @@
 extern "C" {
 #endif
 
-#define HOST_IP "10.142.116.147"
+#define HOST_IP "10.253.101.147"
 #define PORT 3456
+#define MAX_UDP_RX_BUFFER 64
 
 typedef enum {
     SOCK_RECEIVER,

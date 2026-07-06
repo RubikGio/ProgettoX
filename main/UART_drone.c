@@ -46,7 +46,7 @@ void invio_pacchetto_test(QueueHandle_t queueTx){
     uint8_t payload_bytes[3] = {0x02, 0x02, 0x02};
     uint16_t payload_len = sizeof(payload_bytes);
 
-    size_t tt_pack_size = 6 + payload_len + 1;  // stesso schema che usi in uart_rx_task
+    size_t tt_pack_size = 5 + payload_len + 1;  // stesso schema che usi in uart_rx_task
 
     uint8_t *buff = malloc(tt_pack_size);
     if (buff == NULL) {
@@ -55,8 +55,8 @@ void invio_pacchetto_test(QueueHandle_t queueTx){
     }
 
     size_t idx = 0;
-    buff[idx++] = 0x00;   // id_send[0]
-    buff[idx++] = 0x00;   // id_send[1]
+    buff[idx++] = 0x02;   // id_send[0]
+    buff[idx++] = 0x02;   // id_send[1]
     buff[idx++] = opcode;
     buff[idx++] = (uint8_t)(payload_len & 0xFF);        // LSB
     buff[idx++] = (uint8_t)(payload_len >> 8);           // MSB
@@ -68,12 +68,18 @@ void invio_pacchetto_test(QueueHandle_t queueTx){
     for (size_t i = 0; i < payload_len; i++) {
         check ^= payload_bytes[i];
     }
-    buff[idx++] = check;
+
+    buff[idx++] = 0xAA;
 
     msg_t msg;
     msg.data = buff;
     msg.lenght = tt_pack_size;
 
+	ESP_LOGI("QueueSendTest", "Pacchetto inviato (%u byte):", (unsigned)msg.lenght);
+	for (size_t i = 0; i < msg.lenght ; i++) {
+		printf("%02X ", msg.data[i]);
+	}
+	printf("\n");
     if (xQueueSend(queueTx, &msg, pdMS_TO_TICKS(100)) != pdPASS) {
         ESP_LOGW(TAG_TEST, "Coda TX piena, pacchetto di test scartato");
         free(buff);
@@ -90,27 +96,35 @@ static void uart_rx_task(void *pvParameters){
 	{
 		int header_len = uart_read_bytes(MIO_UART, header, 6, portMAX_DELAY);
 
+		ESP_LOGI(TAG_R, "Header ricevuto (%d byte): %02X %02X %02X %02X %02X %02X",
+                     header_len, header[0], header[1], header[2], header[3], header[4], header[5]);
 		if (header_len == 6){
-			uint8_t payload = header[4];
+			uint8_t payload_len = header[4];
 
-			if (payload > 0){
-				size_t tt_pack_size = 6 + payload + 1;
+			if (payload_len > 0){
+				size_t tt_pack_size = 6 + payload_len + 1;
 
 				uint8_t *full_pack = malloc(tt_pack_size);
 
 				if(full_pack != NULL){
 					memcpy(full_pack,header,6);
 
-					int bytes_read = uart_read_bytes(MIO_UART,full_pack + 6, payload, pdMS_TO_TICKS(50));
+					int bytes_read = uart_read_bytes(MIO_UART,full_pack + 6, payload_len + 1, pdMS_TO_TICKS(50));
 
-					if (bytes_read == payload){
+					if (bytes_read == payload_len + 1){
 						msg_t msg;
 						msg.data = full_pack;
 						msg.lenght = tt_pack_size;
+						
+						for (size_t i = 0; i < tt_pack_size; i++) {
+                            ESP_LOGI("UART RX: ","%02X ", full_pack[i]);
+                        }
+						printf("\n");
 
 						if (xQueueSend(queueRx, &msg, 0) == pdPASS)
 						{
 							ESP_LOGI(TAG_R,"Invio dati per coda UDP: %p", (void*)full_pack);
+							vTaskDelay(pdMS_TO_TICKS(200));
 						}
 						else{
 							ESP_LOGW(TAG_R,"Coda UDP piena!!");
@@ -130,10 +144,10 @@ static void uart_rx_task(void *pvParameters){
 	
 }
 
-void setting_uart_trx(QueueHandle_t queueRx, QueueHandle_t queueTx){
+void setting_uart_trx(QueueHandle_t queueRx, QueueHandle_t queueTx, QueueHandle_t queueHuart){
 	
 	uart_config_t uart_config = {
-        .baud_rate = 96000,
+        .baud_rate = 115200,
         .data_bits = UART_DATA_8_BITS,
         .parity = UART_PARITY_DISABLE,
         .stop_bits = UART_STOP_BITS_1,
@@ -143,7 +157,7 @@ void setting_uart_trx(QueueHandle_t queueRx, QueueHandle_t queueTx){
 
 	uart_set_pin(UART_NUM_1,TX_TO_ST,ST_TO_RX,UART_PIN_NO_CHANGE,UART_PIN_NO_CHANGE);
 
-	uart_driver_install(MIO_UART, BUFF_SIZE, BUFF_SIZE, 20, &queueRx, 0);
+	uart_driver_install(MIO_UART, BUFF_SIZE, BUFF_SIZE, 20, &queueHuart, 0);
 	uart_param_config(MIO_UART, &uart_config);
 
 	uart_pattern_queue_reset(MIO_UART, 20);

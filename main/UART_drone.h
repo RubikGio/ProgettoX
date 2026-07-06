@@ -15,7 +15,7 @@ typedef struct {
 	uint8_t *data;
 } msg_t;
 
-void setting_uart_trx(QueueHandle_t, QueueHandle_t);
+void setting_uart_trx(QueueHandle_t, QueueHandle_t, QueueHandle_t);
 void invio_pacchetto_test(QueueHandle_t);
 
 #ifdef __cplusplus

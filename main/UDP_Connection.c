@@ -44,8 +44,11 @@ static void udp_send_task(void *pvParameters){
 	QueueHandle_t queue = data->queue;
 
 	while (1) {
-		msg_t msg = take_data(queue);
-		if (msg.data != NULL && msg.lenght > 0){
+		msg_t msg = take_data(queue);	
+			if (msg.data != NULL && msg.lenght > 0){
+				for (size_t i = 0; i < msg.lenght; i++) {
+				ESP_LOGI("SOCK_SEND: ","%02X ", msg.data[i]);
+			}	
 			int err = sendto(sock, msg.data, msg.lenght, 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
 			if (err < 0) {
 				ESP_LOGE("Sock send", "Error occurred during sending: errno %d", errno);
@@ -80,23 +83,39 @@ static void udp_recv_task(void *pvParameters){
 	int sock = data->sock;
 	QueueHandle_t queue = data->queue;
 
-	msg_t msg;
-
 	while (1)
 	{
 		ESP_LOGI("Sock recv", "Waiting for data");
 
-		int len = recvfrom(sock, msg.data, msg.lenght - 1, 0, (struct sockaddr *)&source_addr, &socklen);
+		uint8_t *rx_buffer = malloc(MAX_UDP_RX_BUFFER);
+        if (rx_buffer == NULL) {
+            ESP_LOGE("Sock recv", "Impossibile allocare memoria!");
+            vTaskDelay(100);
+            continue;
+        }
+
+		int len = recvfrom(sock, rx_buffer, MAX_UDP_RX_BUFFER, 0, (struct sockaddr *)&source_addr, &socklen);
 
 		if (len < 0) {
 			ESP_LOGE("Sock recv ", "recvfrom failed: errno %d", errno);
+			free(rx_buffer);
 			continue;
 			
-		}else if (xQueueSend(queue,&msg,0) == pdPASS){
-			ESP_LOGI("Sock recv","Data arrived con pacchetto: %d",msg.data);
+		}else if (len > 0){
+			msg_t msg;
+			msg.data = rx_buffer;
+			msg.lenght = len;
+			if (xQueueSend(queue, &msg, 0) == pdPASS){
+				for (size_t i = 0; i < msg.lenght; i++ ){
+				ESP_LOGI("Sock recv: ","%c",msg.data[i]);
+			}
+			}
+			else{
+				free(rx_buffer);
+			}
+		}else{
+			free(rx_buffer);
 		}
-		
-		free(msg.data);
 
 		if (source_addr.ss_family == AF_INET) {
 			struct sockaddr_in *source = (struct sockaddr_in *)&source_addr;
