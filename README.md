@@ -8,3 +8,5 @@ usato per inviare i comandi di volo al drone.
 
 # Struttura cartelle 
 _Cartella main_: Prevede il codice usato per la ESP32 che gestisce l'interfaccia _UART_, l'interfaccia nella gestione della comunicazione _socket_ per il drone e gestione dei _led RGB_ per un feedback comunicativo.
+
+_Cartella Core_: Contiene il codice della STM32 che viene diviso in due cartella a sua volta _Inc_ e _Src_. La prima contiene gli header file, la seconda contiene appunto i source file. La STM32 svolge da orchestratore e comnuicherà con il modulo host SUB shield mini v2.0 avente chip _MAX4231E_, due display tramite protocollo _I2C_, protocollo _USART_ con la **ESP_32** e procollo _SPI_ con l'host shield. 
