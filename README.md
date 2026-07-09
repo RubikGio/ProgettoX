@@ -12,5 +12,18 @@ _Cartella main_: Prevede il codice usato per la ESP32 che gestisce l'interfaccia
 _Cartella Core_: Contiene il codice della STM32 che viene diviso in due cartella a sua volta _Inc_ e _Src_. La prima contiene gli header file, la seconda contiene appunto i source file. La STM32 svolge da orchestratore e comnuicherà con il modulo host SUB shield mini v2.0 avente chip _MAX4231E_, due display tramite protocollo _I2C_, protocollo _USART_ con la **ESP_32** e procollo _SPI_ con l'host shield. 
 
 # Collegamento PIN tra schede
-|----------
-|                  
+| Sheda | PIN | Protocollo |
+|-----: | --- | -----------|
+| STM32 | PA5 = SCK | SPI  |
+|       | PA6 = MISO| SPI  | 
+|       | PA7 = MOSI| SPI  |
+|       | PE3 = CS  | SPI  |
+|       | PE6 = INT | SPI  | 
+|       | PC4 = TX  | UART | 
+|       | PC5 = RX  | UART | 
+|       | PB7 = SDA | I2C  | 
+|       | PB6 = SCL | I2C  | 
+| ESP32 | RX = 5    | UART | 
+|       | TX = 4    | UART |
+ --------------------------
+ 
