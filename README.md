@@ -17,7 +17,7 @@ _Cartella Core_: Contiene il codice della STM32 che viene diviso in due cartella
 | STM32 | PA5 = SCK | SPI  |
 |       | PA6 = MISO| SPI  | 
 |       | PA7 = MOSI| SPI  |
-|       | PE3 = CS  | SPI  |
+|       | PC13 = CS | SPI  |
 |       | PE6 = INT | SPI  | 
 |       | PC4 = TX  | UART | 
 |       | PC5 = RX  | UART | 
