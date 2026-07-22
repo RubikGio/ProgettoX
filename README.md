@@ -27,5 +27,9 @@ _Cartella Core_: Contiene il codice della STM32 che viene diviso in due cartella
 |       | PA10 = SDA| I2C2 |
 | ESP32 | RX = 5    | UART | 
 |       | TX = 4    | UART |
+| CH376 | D3 = CS   | SPI  |
+|       | D5 = SCK  | SPI  | 
+|       | D6 = MOSI | SPI  | 
+|       | D7 = MISO | SPI  | 
  --------------------------
  
