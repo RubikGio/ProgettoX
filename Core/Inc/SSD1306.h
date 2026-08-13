@@ -5,7 +5,7 @@
 #include "stm32f3xx_hal.h"
 
 // -- COMANDI --
-#define SSD1306_I2C_ADDR   0x3C << 1   // indirizzo tipico 0x3C, shiftato per la HAL (che vuole 8-bit address)
+#define SSD1306_I2C_ADDR   0x3C << 1   // indirizzo tipico 0x3C, shiftato per la HAL
 #define SSD1306_WIDTH      128
 #define SSD1306_HEIGHT     64
 #define SSD1306_PAGES      (SSD1306_HEIGHT / 8)
@@ -36,8 +36,9 @@
 void Init_SSD1306(I2C_HandleTypeDef *);
 void WriteReg_SSD1306(I2C_HandleTypeDef *, uint8_t);
 void UpdateCursor_SSD1306(I2C_HandleTypeDef *, uint8_t *);
-void String_SSD1306(uint8_t, uint8_t, uint8_t *, char *);
-void Char_SSD1306(uint8_t, uint8_t, uint8_t *, char);
+void ClearArea_SSD1306(uint8_t *, uint8_t, uint8_t, uint8_t);
+void String_SSD1306(uint8_t, uint8_t, uint8_t *,const char *);
+void Char_SSD1306(uint8_t, uint8_t, uint8_t *,char);
 
 // È diviso in colonne la scrittura e in righe
 // Verticale ne ha di 8 pixel ognuna
