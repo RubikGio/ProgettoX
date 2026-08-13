@@ -78,11 +78,6 @@ static uint8_t ch376_reset_host(SPI_HandleTypeDef *hspi1){
 
     HAL_Delay(40);
 
-    /* uint8_t status = ch376_waitINTandGetStatus(hspi1);
-
-    if (status != USB_INT_SUCCESS)
-        return USB_INT_SUCCESS;*/
-
     return USB_INT_SUCCESS;
 }
 
@@ -94,6 +89,10 @@ static uint8_t ch376_connection(SPI_HandleTypeDef *hspi1){
     HAL_Delay(100);
 
 	uint8_t status = ch376_waitINTandGetStatus(hspi1);
+	if (status != USB_INT_CONNECT){
+		if (status == 0xFF) return USB_ERROR_CONNECTION;
+			return status;
+	}
 
     return status;
 }
@@ -104,8 +103,6 @@ static uint8_t ch376_get_descriptor(SPI_HandleTypeDef *hspi1){
 	uint8_t len = 0x00;
 	uint8_t buffer[18];
 
-	USB_DeviceDescriptor descriptor;
-
 	uint8_t setup[8] =
 		{
 			0x80,       // bmRequestType
@@ -115,7 +112,9 @@ static uint8_t ch376_get_descriptor(SPI_HandleTypeDef *hspi1){
 			0x08, 0x00  // wLength = 18
 		};
 
-	// CARICAMENTO SETUP packet 
+	// LOAD SETUP packet 
+	HAL_Delay(50);
+
 	ch376_sendCommand(WR_USB_DATA, hspi1);
     ch376_writeData(8, hspi1);
 
@@ -131,7 +130,9 @@ static uint8_t ch376_get_descriptor(SPI_HandleTypeDef *hspi1){
 
     ch376_endCommand();
 
-	// Attesa completamento 
+    HAL_Delay(50);
+
+	// Waiting operation
 	status = ch376_waitINTandGetStatus(hspi1);
     if (status != USB_INT_SUCCESS)
 		{
@@ -146,7 +147,7 @@ static uint8_t ch376_get_descriptor(SPI_HandleTypeDef *hspi1){
 
     ch376_endCommand();
 
-	// Attesa DATA IN
+	// Wait DATA IN
 	status = ch376_waitINTandGetStatus(hspi1);
     if (status != USB_INT_SUCCESS)
 		{
@@ -166,7 +167,7 @@ static uint8_t ch376_get_descriptor(SPI_HandleTypeDef *hspi1){
     ch376_writeData(0x01, hspi1);   // EP0 + OUT
     ch376_endCommand();
 
-	// ATTESA STATUS 
+	// WAIT STATUS 
 	status = ch376_waitINTandGetStatus(hspi1);
     if (status != USB_INT_SUCCESS)
 		{
@@ -381,7 +382,7 @@ static uint8_t ch376_setConfig(SPI_HandleTypeDef *hspi1, uint8_t config_value){
 	uint8_t setup[8] = { 
 		0x00, // bmRequestType 
 		0x09, // SET_CONFIGURATION 
-		0x01, 0x00, // wValue 
+		config_value, 0x00, // wValue 
 		0x00, 0x00, // wIndex 
 		0x00, 0x00 // wLength 
 		};
@@ -630,11 +631,6 @@ static uint8_t ch376_getHIDreport(SPI_HandleTypeDef *hspi1){
 	return USB_INT_SUCCESS;
 }
 
-// Funzione per sbloccare la telemetria completa del DualSense
-uint8_t ch376_unlockDualSense(SPI_HandleTypeDef *hspi1) {
-    return USB_INT_SUCCESS;
-}
-
 uint8_t ch376_enumerateDevice(SPI_HandleTypeDef *hspi1) {
 	uint8_t status = 0x00;
 	uint16_t total_lenght = 0x0000;
@@ -717,32 +713,11 @@ uint8_t ch376_enumerateDevice(SPI_HandleTypeDef *hspi1) {
 	return USB_INT_SUCCESS;
 }
 
-uint8_t ch376_readInterruptData(SPI_HandleTypeDef *hspi, uint8_t *buffer, uint8_t *len) {
-    uint8_t status;
-
-	ch376_sendCommand(ISSUE_TKN_X, hspi);
-    ch376_writeData(0x80, hspi); // Sync
-    ch376_writeData(((DS_info.endpoint_in & 0x0F) << 4) | USB_PID_IN, hspi); 
-    ch376_endCommand();
-
-    status = ch376_waitINTandGetStatus(hspi);
-
-    if (status == USB_INT_SUCCESS) {
-        ch376_sendCommand(RD_USB_DATA0, hspi);
-        *len = ch376_readData(hspi); 
-        for (int i = 0; i < *len; i++) {
-            buffer[i] = ch376_readData(hspi);
-        }
-        ch376_endCommand();
-    }
-    return status;
-}
-
 // Avvia la transazione in modo non bloccante. Non aspetta l'interrupt.
 void ch376_startINTransaction(SPI_HandleTypeDef *hspi, uint8_t sync_bit) {
     ch376_sendCommand(ISSUE_TKN_X, hspi);
     ch376_writeData(sync_bit, hspi); 
-    ch376_writeData(((DS_info.endpoint_in & 0x0F) << 4) | USB_PID_IN, hspi); // IN token per l'endpoint
+    ch376_writeData(((DS_info.endpoint_in & 0x0F) << 4) | USB_PID_IN, hspi); // IN token per l'endpoint 0x84 ossia EP4
     ch376_endCommand();
 }
 
@@ -786,19 +761,15 @@ uint8_t ch376_setDualsenseLED(SPI_HandleTypeDef *hspi1){
 
 	memset(report,0,sizeof(report));
 
-	/* 02 ff f7 00 00 00 00 00 00 00 10 26 90 a0
-	ff 00 00 00 00 00 00 00 26 90 a0 ff 00 00
-	00 00 00 00 00 00 00 00 00 00 00 00 02 00
-	02 00 00 ff ff ff */ 
 
 	/*FF F7 00 00 00 00 00 00 00 10
 	00 00 00 00 00 00 00 00
 	00 00 00 00 00 00 00 00
 	00 00 00 00 00 00 00 00 00 00
 	02 00 02 00 00
-	FF 00 00*/
+	FF FF FF*/
 
-    report[0]  = DS_OUTPUT_REPORT;       // Report ID
+    report[0]  = DS_OUTPUT_REPORT;
     report[1]  = 0xFF;       
 	report[2]  = 0xF7;
 
@@ -814,7 +785,6 @@ uint8_t ch376_setDualsenseLED(SPI_HandleTypeDef *hspi1){
 
     // Carica il report nel buffer USB del CH376
     ch376_sendCommand(WR_USB_DATA, hspi1);
-
     ch376_writeData(DS_REPORT_OUTPUT_SIZE, hspi1);
 
     for (uint8_t i = 0; i < DS_REPORT_OUTPUT_SIZE; i++) ch376_writeData(report[i], hspi1);

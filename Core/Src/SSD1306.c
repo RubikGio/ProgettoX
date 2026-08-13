@@ -48,18 +48,39 @@ void Char_SSD1306(uint8_t riga, uint8_t colonna, uint8_t *buffer, char lettera){
 	uint8_t indice_font = lettera - 32;
 	uint16_t posizione = (riga * 128) + colonna;
 
+	if (lettera < 32 || lettera >127){
+		lettera = '?';
+	}
+
+	if(riga > 7 || colonna > 122) return;
+
+
 	for(short int i = 0; i < CHARS_COLS_LENGTH; i++){
 		buffer[posizione + i] = FONTS[indice_font][i];
 	}
 	buffer[posizione + 5] = 0x00; // Ultima colonna lasciamo a 0
 }
 
-void String_SSD1306(uint8_t riga, uint8_t colonna, uint8_t *buffer, char *stringa){
+void String_SSD1306(uint8_t riga, uint8_t colonna, uint8_t *buffer, const char *stringa){
 	short int i = 0;
 	while (stringa[i] != '\0')
 	{
+		if((colonna + 6) > 128){
+			break;
+		}
 		Char_SSD1306(riga,colonna + (i*6), buffer, stringa[i]);
 		i++;
 	}
 	
 }
+void ClearArea_SSD1306(uint8_t *buffer, uint8_t riga, uint8_t colonna, uint8_t larghezza){
+	uint16_t posizione;
+
+	posizione = (riga * SSD1306_WIDTH) + colonna;
+
+	for (uint8_t i = 0; i < larghezza; i++)
+	{
+		buffer[posizione + i] = 0x00;
+	}
+}
+
