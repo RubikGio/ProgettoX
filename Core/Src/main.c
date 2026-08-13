@@ -21,14 +21,17 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "analyzerDronePack.h"
+#include "CH376.h"
 #include "analyzerDualsense.h"
 #include "usartESPsending.h"
 #include "usartESPreceiving.h"
 #include "globalVariable.h"
 #include "CircularQueue.h"
-#include "MAX3421E.h"
+#include "SSD1306.h"
+#include "display.h"
+
 #include <string.h>
+#include <stdlib.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -39,9 +42,11 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define MAX_QUEUE 30
-#define MAX4231 GPIO_PIN_6
+#define QUEUE_DISPALY 10
+#define CH376 GPIO_PIN_6
 #define MAX_BUFF_PAD 64
 #define MAX_BUFF_DRONE 36
+#define DISPLAY_BUFF 1024
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -51,36 +56,60 @@
 
 /* Private variables ---------------------------------------------------------*/
 I2C_HandleTypeDef hi2c1;
+I2C_HandleTypeDef hi2c2;
+DMA_HandleTypeDef hdma_i2c1_tx;
+DMA_HandleTypeDef hdma_i2c2_tx;
+
 SPI_HandleTypeDef hspi1;
+
 UART_HandleTypeDef huart1;
+UART_HandleTypeDef huart2;
+
 PCD_HandleTypeDef hpcd_USB_FS;
 
 /* USER CODE BEGIN PV */
+static CircQueue QueueDualsense;
+static CircQueue QueueSendData;
+static CircQueue QueueReceiveData;
+static CircQueue QueueDisplayController;
+static CircQueue QueueDisplayTelemetry;
+
+static uint8_t ssd1306_buffer[SSD1306_WIDTH * SSD1306_PAGES];
+static uint8_t dma_buffer[SSD1306_WIDTH * SSD1306_PAGES];
+
+static uint8_t dataRawJoypad[MAX_BUFF_PAD];
+static uint8_t dataRawDrone[MAX_BUFF_DRONE];
+
+static uint8_t sync_bit = 0x80; //byte usato nella richiesta del dato tipo data0 e tipo data1
+volatile uint8_t onlyOneUSB = 0;
+
+volatile uint8_t USB_allarm = 0;
+volatile uint8_t Rx_allarm = 0;
+
+volatile uint8_t pin_alternate = 0;
+
+volatile uint8_t ssd1306_pending = 0;
+volatile uint8_t ssd1306_busy = 0;
 
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_USB_PCD_Init(void);
 static void MX_USART1_UART_Init(void);
+static void MX_I2C2_Init(void);
+static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-static CircQueue QueueDualsense;
-static CircQueue QueueSendData;
-static CircQueue QueueReceiveData;
 
-volatile uint8_t dataRawJoypad[MAX_BUFF_PAD];
-volatile uint8_t dataRawDrone[MAX_BUFF_DRONE];
-
-volatile uint8_t USB_allarm = 0;
-volatile uint8_t Rx_allarm = 0;
 /* USER CODE END 0 */
 
 /**
@@ -91,9 +120,14 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-  DualsenseData DSdata;
-  DronePackSending DPsend;
-  DronePackRecieve DPrecv;
+  DualsenseData DSdata[MAX_QUEUE];
+  DronePackSending DPsend[MAX_QUEUE];
+  DronePackRecieve DPrecv[MAX_QUEUE];
+
+  DualsenseData DisplayController[MAX_QUEUE];
+  DronePackRecieve DisplayPack[MAX_QUEUE];
+
+  uint8_t fly_mode = 0;
 
   /* USER CODE END 1 */
 
@@ -115,18 +149,28 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_I2C1_Init();
   MX_SPI1_Init();
   MX_USB_PCD_Init();
   MX_USART1_UART_Init();
+  MX_I2C2_Init();
+  MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-  max3421_init(&hspi1); 
+
+  //Init_SSD1306(&hi2c1);
+  //Init_SSD1306(&hi2c2);
 
   CQ_init(&QueueDualsense,&DSdata,MAX_QUEUE,sizeof(DualsenseData));
   CQ_init(&QueueSendData,&DPsend,MAX_QUEUE,sizeof(DronePackSending));
   CQ_init(&QueueReceiveData,&DPrecv,MAX_QUEUE,sizeof(DronePackRecieve));
+  CQ_init(&QueueDisplayController,&DisplayController,QUEUE_DISPALY,sizeof(DualsenseData));
+  CQ_init(&QueueDisplayTelemetry,&DisplayPack,QUEUE_DISPALY,sizeof(DronePackRecieve));
 
-  startUSB_request(&hspi1);
+  // Test SPI: CHECK_EXIST
+  uint8_t ch376_test_val;
+  ch376_test_val = ch376_checkExist(&hspi1, 0x55);
+  HAL_Delay(20);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -135,40 +179,87 @@ int main(void)
   DronePackRecieve dpr;
   DualsenseData dsd;
 
+  layoutDisplay_pad(ssd1306_buffer);
+
   while (1)
   {
     /* USER CODE END WHILE */
 
-	if (USB_allarm == 1){
+    /* USER CODE BEGIN 3 */
+	  uint8_t cmp_enumerate;
+	  uint8_t exit_led;
+
+	  if ((HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin) == GPIO_PIN_SET) && (onlyOneUSB == 0)) {
+		HAL_Delay(50); // Anti rimbalzo hardware
+
+	   cmp_enumerate = 0x00;
+	   cmp_enumerate = ch376_enumerateDevice(&hspi1);
+	   
+	   if ( cmp_enumerate == USB_INT_SUCCESS) {
+		   HAL_Delay(40);
+
+			exit_led = 0x00;
+			exit_led = ch376_setDualsenseLED(&hspi1);
+
+			HAL_Delay(50);
+
+	 	  	// SETUP per la prima richiesta in asincrono
+	       	ch376_startINTransaction(&hspi1, sync_bit);
+
+	       	onlyOneUSB = 1;
+		   }
+
+	   }while(HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin) == GPIO_PIN_SET){}
+
+
+	  if (onlyOneUSB == 1){
+
+	  	if (USB_allarm == 1){
+
 		takeUSBdata();
-		USB_allarm = 0;
-	}
 
-	if(CQ_pop(&QueueDualsense,&dsd)){
-		// traduzione comandi per inserirli nel formato pacchetto DronePackSending
-		composePacket(&dsd,&dps);
-		//trasmissione dei dati dal controller sul display
-		
-	}
-	
-	if(CQ_pop(&QueueSendData,&dps)){
-		uint8_t *pData;
-		uint16_t idx_len = serializePacket(&dps,pData);
-		HAL_UART_Transmit_IT(&huart1,pData,idx_len);
-	}
+	 	USB_allarm = 0;
 
-	if (Rx_allarm == 1){
-		takeRxData();
-	}
+		if(CQ_pop(&QueueDualsense,&dsd)){
+			composePacket(&dsd,&dps);
+			CQ_push(&QueueSendData,&dps);
+			CQ_push(&QueueDisplayController,&dsd);
 
-	if (CQ_pop(&QueueReceiveData,&dpr)){
-		// trasmissione verso i display dati drone 
-	}
+		}
 
-	/* USER CODE BEGIN 3 */
+		if(CQ_pop(&QueueSendData,&dps)){
+			uint8_t pData[50];
+			uint16_t idx_len = serializePacket(&dps,pData);
+			HAL_UART_Transmit_IT(&huart1,pData,idx_len);
+		}
+
+		if(CQ_pop(&QueueDisplayController,&dsd)){
+			updateAll(dsd,&fly_mode,ssd1306_buffer);
+			ssd1306_pending = 1;
+		}
+	}
+	  	if (Rx_allarm == 1){
+			takeRxData();
+		}
+
+	  	if(ssd1306_pending == 1 && ssd1306_busy == 0){
+	  		ssd1306_pending = 0;
+	  		ssd1306_busy = 1;
+
+			memcpy(dma_buffer, ssd1306_buffer, sizeof(dma_buffer));
+
+	  		UpdateCursor_SSD1306(&hi2c1, dma_buffer);
+	  	}
+
+		if (CQ_pop(&QueueReceiveData,&dpr)){
+			// trasmissione verso i display dati drone
+		}
+
+}
   }
   /* USER CODE END 3 */
 }
+
 
 /**
   * @brief System Clock Configuration
@@ -210,9 +301,12 @@ void SystemClock_Config(void)
     Error_Handler();
   }
   PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USB|RCC_PERIPHCLK_USART1
-                              |RCC_PERIPHCLK_I2C1;
+                              |RCC_PERIPHCLK_USART2|RCC_PERIPHCLK_I2C1
+                              |RCC_PERIPHCLK_I2C2;
   PeriphClkInit.Usart1ClockSelection = RCC_USART1CLKSOURCE_PCLK2;
+  PeriphClkInit.Usart2ClockSelection = RCC_USART2CLKSOURCE_PCLK1;
   PeriphClkInit.I2c1ClockSelection = RCC_I2C1CLKSOURCE_HSI;
+  PeriphClkInit.I2c2ClockSelection = RCC_I2C2CLKSOURCE_HSI;
   PeriphClkInit.USBClockSelection = RCC_USBCLKSOURCE_PLL;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
@@ -236,7 +330,7 @@ static void MX_I2C1_Init(void)
 
   /* USER CODE END I2C1_Init 1 */
   hi2c1.Instance = I2C1;
-  hi2c1.Init.Timing = 0x2000090E;
+  hi2c1.Init.Timing = 0x00201D2B;
   hi2c1.Init.OwnAddress1 = 0;
   hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
   hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
@@ -263,8 +357,54 @@ static void MX_I2C1_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN I2C1_Init 2 */
-
   /* USER CODE END I2C1_Init 2 */
+
+}
+
+/**
+  * @brief I2C2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C2_Init(void)
+{
+
+  /* USER CODE BEGIN I2C2_Init 0 */
+
+  /* USER CODE END I2C2_Init 0 */
+
+  /* USER CODE BEGIN I2C2_Init 1 */
+
+  /* USER CODE END I2C2_Init 1 */
+  hi2c2.Instance = I2C2;
+  hi2c2.Init.Timing = 0x00201D2B;
+  hi2c2.Init.OwnAddress1 = 0;
+  hi2c2.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c2.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c2.Init.OwnAddress2 = 0;
+  hi2c2.Init.OwnAddress2Masks = I2C_OA2_NOMASK;
+  hi2c2.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c2.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Analogue filter
+  */
+  if (HAL_I2CEx_ConfigAnalogFilter(&hi2c2, I2C_ANALOGFILTER_ENABLE) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Digital filter
+  */
+  if (HAL_I2CEx_ConfigDigitalFilter(&hi2c2, 0) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C2_Init 2 */
+  /* USER CODE END I2C2_Init 2 */
 
 }
 
@@ -287,7 +427,7 @@ static void MX_SPI1_Init(void)
   hspi1.Instance = SPI1;
   hspi1.Init.Mode = SPI_MODE_MASTER;
   hspi1.Init.Direction = SPI_DIRECTION_2LINES;
-  hspi1.Init.DataSize = SPI_DATASIZE_4BIT;
+  hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
   hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi1.Init.NSS = SPI_NSS_SOFT;
@@ -337,9 +477,43 @@ static void MX_USART1_UART_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN USART1_Init 2 */
-  HAL_NVIC_SetPriority(USART1_IRQn, 2, 0);
-  HAL_NVIC_EnableIRQ(USART1_IRQn);
+
   /* USER CODE END USART1_Init 2 */
+
+}
+
+/**
+  * @brief USART2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART2_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART2_Init 0 */
+
+  /* USER CODE END USART2_Init 0 */
+
+  /* USER CODE BEGIN USART2_Init 1 */
+
+  /* USER CODE END USART2_Init 1 */
+  huart2.Instance = USART2;
+  huart2.Init.BaudRate = 38400;
+  huart2.Init.WordLength = UART_WORDLENGTH_8B;
+  huart2.Init.StopBits = UART_STOPBITS_1;
+  huart2.Init.Parity = UART_PARITY_NONE;
+  huart2.Init.Mode = UART_MODE_TX_RX;
+  huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
+  huart2.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+  huart2.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+  if (HAL_UART_Init(&huart2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART2_Init 2 */
+
+  /* USER CODE END USART2_Init 2 */
 
 }
 
@@ -375,6 +549,25 @@ static void MX_USB_PCD_Init(void)
 }
 
 /**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Channel4_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel4_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel4_IRQn);
+  /* DMA1_Channel6_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel6_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel6_IRQn);
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -398,6 +591,9 @@ static void MX_GPIO_Init(void)
                           |LD7_Pin|LD9_Pin|LD10_Pin|LD8_Pin
                           |LD6_Pin, GPIO_PIN_RESET);
 
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+
   /*Configure GPIO pins : DRDY_Pin MEMS_INT3_Pin MEMS_INT4_Pin MEMS_INT1_Pin
                            MEMS_INT2_Pin */
   GPIO_InitStruct.Pin = DRDY_Pin|MEMS_INT3_Pin|MEMS_INT4_Pin|MEMS_INT1_Pin
@@ -417,16 +613,11 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PE6 */
-  GPIO_InitStruct.Pin = GPIO_PIN_6;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
-
   /*Configure GPIO pin : PC13 */
   GPIO_InitStruct.Pin = GPIO_PIN_13;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /*Configure GPIO pin : B1_Pin */
@@ -435,52 +626,76 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : PF6 */
+  GPIO_InitStruct.Pin = GPIO_PIN_6;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOF, &GPIO_InitStruct);
+
   /* USER CODE BEGIN MX_GPIO_Init_2 */
-  HAL_NVIC_SetPriority(EXTI0_IRQn, 3, 0);
-  HAL_NVIC_EnableIRQ(EXTI0_IRQn);
+  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 3, 0);   // linee 5-9 condividono questo vettore
+  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
 
+void HAL_I2C_MasterTxCpltCallback(I2C_HandleTypeDef *hi2c1) { // Primo display per il drone 
+	if (hi2c1->Instance == I2C1) {
+		ssd1306_busy = 1;
+	}
+}
+
+/* void HAL_I2C_MasterTxCpltCallback(I2C_HandleTypeDef *hi2c2) { // Secondo display del controller
+	if (hi2c2->Instance == I2C2) {
+
+	}
+}*/
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
     if (huart->Instance == USART1) {
         HAL_UART_Receive_IT(&huart1, dataRawDrone, MAX_BUFF_DRONE);
-
 		Rx_allarm = 1;
     }
 }
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
-	if (GPIO_Pin == MAX4231){
+	if (GPIO_Pin == CH376){
 		USB_allarm = 1;
 	}
 }
 
-void takeUSBdata(){
-	uint8_t allarmi = max3421_readReg(HIRQ, &hspi1);
+void takeUSBdata() {
+    uint8_t report_buffer[64];
+    uint8_t report_len = 0;
+    
+    uint8_t status = ch376_readInterruptDataAsync(&hspi1, report_buffer, &report_len);
+    
+    if (status == USB_INT_SUCCESS && report_len > 0) {
+        DualsenseData data;
+        
+        if (packDualsenseData(&data, MAX_BUFF_PAD, report_buffer)) {
 
-		if (allarmi & bmHXFRDNIRQ){
-			uint8_t result = max3421_readReg(HRSL, &hspi1) & 0x0F; // Confronto successivo con success
+            CQ_push(&QueueDualsense, &data);
+            HAL_GPIO_TogglePin(GPIOE, LD6_Pin); // Feedback visivo
+        }
+		sync_bit ^= 0x80;
 
-			if (result == SUCCESS){
-				uint8_t lenght = max3421_readReg(RCVBC, &hspi1);
-				DualsenseData data;
+    } 
+    else if (status == USB_INT_NAK) {
+        // Nessun dato nuovo dal controller, è normale. Non facciamo nulla.
+    }
+    else {
+        // Errore o disconnessione. Gestione dell'errore.
+        HAL_GPIO_TogglePin(GPIOE, LD5_Pin);
+    }
+	if(pin_alternate == 4){
+		HAL_GPIO_WritePin(GPIOE,LD6_Pin,GPIO_PIN_RESET);
+		HAL_GPIO_WritePin(GPIOE,LD5_Pin,GPIO_PIN_RESET);
+		pin_alternate = 0;
+	}
 
-				max3421_readFIFO(RCVFIFO, dataRawJoypad, lenght, &hspi1);
-			
-				if (packDualsenseData(&data, MAX_BUFF_PAD, dataRawJoypad)){
-					CQ_push(&QueueDualsense,&data);
-					HAL_GPIO_TogglePin(GPIOE,LD6_Pin);
-
-					return;
-				}
-
-				HAL_GPIO_TogglePin(GPIOE,LD9_Pin);
-			}
-			max3421_writeReg(HIRQ, bmHXFRDNIRQ, &hspi1);
-
-		}
+	pin_alternate++;
+    ch376_startINTransaction(&hspi1, sync_bit);
 }
 
 void takeRxData(){
@@ -488,8 +703,6 @@ void takeRxData(){
 
 		if (deserializePacket(dataRawDrone,&dpr)){
 			CQ_push(&QueueReceiveData, &dpr);
-
-
 			
 			HAL_GPIO_TogglePin(GPIOE, LD7_Pin);
 
