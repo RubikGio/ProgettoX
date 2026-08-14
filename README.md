@@ -25,8 +25,8 @@ _Cartella Core_: Contiene il codice della STM32 che viene diviso in due cartella
 |       | PB6 = SCL | I2C1 | 
 |       | PA9 = SCL | I2C2 |
 |       | PA10 = SDA| I2C2 |
-| ESP32 | RX = 5    | UART | 
-|       | TX = 4    | UART |
+| ESP32 | RX = 4    | UART | 
+|       | TX = 5    | UART |
 | CH376 | D3 = CS   | SPI  |
 |       | D5 = SCK  | SPI  | 
 |       | D6 = MOSI | SPI  | 
