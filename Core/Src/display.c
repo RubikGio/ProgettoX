@@ -5,20 +5,31 @@ static uint8_t op_mode = 0;
 static uint8_t engine = 0;
 
 static const char *pushButtonState(uint8_t dato, uint8_t *state){
-	if (*state == 0){
-		if (dato == 0xFF){
-			*state = 1;
-			return "ON";
-		}
-		return "OFF";
-	}
+	// 1 e 2 ON
+	// 0 e 3 OFF
 
-	if (dato == 0xFF){
-		*state = 0;
-		return "OFF";
-	}
+	if (dato == 0x01) {
+	        if (*state == 0) {
+	            *state = 1; // Acceso ma passiamo allo stato "in attesa di rilascio"
+	        } else if (*state == 2) {
+	            *state = 3; // spento, ma passiamo allo stato "in attesa di rilascio"
+	        }
+	        // Se è 1 o 3, non facciamo nulla: ignoriamo la pressione continua
+	    }
+	    else {
+	        // dato 0x00
+	        if (*state == 1) {
+	            *state = 2; // Rilasciato dopo accensione ON
+	        } else if (*state == 3) {
+	            *state = 0; // Rilasciato dopo spegnimento OFF
+	        }
+	    }
 
-	return "ON";
+	    if (*state == 1 || *state == 2) {
+	        return "ON";
+	    } else {
+	        return "OFF";
+	    }
 }
 
 void layoutDisplay_pad(uint8_t *buffer){
@@ -56,12 +67,12 @@ void updateValue(uint8_t *buffer, uint8_t riga, uint8_t dato){
 
 void updateAll(DualsenseData dsd, uint8_t *stato, uint8_t *buffer){
 	if (*stato == 0){
-			if (dsd.R1_button == 0xFF){
-				*stato = 0xFF;
+			if (dsd.R1_button == 0x01){
+				*stato = 0x01;
 			}
 		}
-		if (*stato == 0xFF){
-			if (dsd.L1_button == 0xFF){
+		if (*stato == 0x01){
+			if (dsd.L1_button == 0x01){
 				*stato = 0x00;
 			}
 		}
@@ -73,4 +84,10 @@ void updateAll(DualsenseData dsd, uint8_t *stato, uint8_t *buffer){
 	updateValue(buffer,4,dsd.button_circle);
 	updateValue(buffer,5,*stato);
 	updateValue(buffer,6,dsd.button_triangle);
+}
+
+void clearAll(uint8_t *buffer){
+	for(int i = 0; i < 8; i++){
+		ClearArea_SSD1306(buffer, i, 0, SSD1306_WIDTH);
+	}
 }

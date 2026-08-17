@@ -635,10 +635,10 @@ uint8_t ch376_enumerateDevice(SPI_HandleTypeDef *hspi1) {
 	uint8_t status = 0x00;
 	uint16_t total_lenght = 0x0000;
 	uint8_t config_value = 0x00;
-	usb_state = 0;
+	usb_state = USB_RESET;
 	
 	// FASE 1 --> RESET 
-	if (usb_state == RESET){
+	if (usb_state == USB_RESET){
 		status = ch376_init(hspi1);
 		if (status != USB_INT_SUCCESS) return status;
 		usb_state = USB_RESET_HOST;
@@ -706,7 +706,7 @@ uint8_t ch376_enumerateDevice(SPI_HandleTypeDef *hspi1) {
 	}
 
 	if(usb_state == USB_DONE){
-		usb_state = 0;
+		usb_state = USB_RESET;
 		return USB_INT_SUCCESS;
 	}
 

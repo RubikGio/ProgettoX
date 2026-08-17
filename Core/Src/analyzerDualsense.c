@@ -3,18 +3,33 @@
 #include <stdlib.h>
 
 static uint8_t flymode = 0;
-static uint8_t engine = 0x00;
+
+static uint8_t btn_detection[5] = {0};
+
+static uint8_t translateAxisX(uint8_t X){
+	if(X > 0x7A && X < 0x86){ //confronto tra 122 e 134
+		return 0x80;
+	}
+	return X;
+}
+
+static uint8_t translateAxisY(uint8_t Y){
+	if(Y > 0x7A && Y < 0x86){ //confronto tra 122 e 134
+		return 0x80;
+	}
+	return Y;
+}
 
 uint8_t packDualsenseData(DualsenseData *dualData, size_t data_len, uint8_t *dataRaw){
 
 	if (data_len != 64 || dataRaw[0] != 1){
-		return 1;
+		return 0;
 	}
 
 	dualData->X_axis_left = dataRaw[1];
-	dualData->Y_axis_left = dataRaw[2];
+	dualData->Y_axis_left = 255 - dataRaw[2];
 	dualData->X_axis_right = dataRaw[3];
-	dualData->Y_axis_right = dataRaw[4];
+	dualData->Y_axis_right = 255 - dataRaw[4];
 	
 	dualData->L2_trigger = dataRaw[5];
 	dualData->R2_trigger = dataRaw[6];
@@ -31,14 +46,17 @@ uint8_t packDualsenseData(DualsenseData *dualData, size_t data_len, uint8_t *dat
 
 	dualData->battery = (dataRaw[53]) & 0x0F;
 
-	return 0;
+	return 1;
 }
 
 uint8_t composePacket(DualsenseData *dualData, DronePackSending *droneData){
 	uint8_t comm[] = {dualData->button_triangle, dualData->button_square, dualData->button_circle, dualData->R1_button, 
 					  dualData->L1_button};
-	uint8_t opcode = KEEP_ALIVE;
-	uint32_t payload = 0x01;
+	
+	
+	uint8_t opcode = ACK;
+	uint32_t tempPayload = 0x00000001;
+	uint8_t *payload;
 
 	uint8_t X_left = 0x00;
 	uint8_t Y_left = 0x00;
@@ -47,45 +65,38 @@ uint8_t composePacket(DualsenseData *dualData, DronePackSending *droneData){
 	uint8_t Y_right = 0x00;
 
 	uint16_t len = 0x0100;
+	uint8_t engine = 0x01;
 
-	if (comm[0] == 0xFF){ //OP MODE
+	if (comm[0] == 0x01 && btn_detection[0] < 2){ //OP MODE Bottone triangolo
 		opcode = USE_MODE;
 
-		payload = 0x02;
+		tempPayload = 0x02;
 		len = 0x0100;
-		
+
 	}
-	else if(comm[1] == 0xFF){ // GPS MODE
+	else if(comm[1] == 0x01 && btn_detection[1] < 2){ // GPS MODE Bottone quadrato
 		opcode = USE_MODE;
 
-		payload = 0x01;
+		tempPayload = 0x01;
 		len = 0x0100;
 	}
-	else if(comm[2] == 0xFF){ //ENGINE ON
+	else if(comm[2] == 0x01 && btn_detection[2] < 2){ //ENGINE ON Bottone Cerchio
 		opcode = ENGINE_ON;
 		len = 0x0100;
 		if (flymode == 0){
-			if (engine == 0x00){
-				engine = 0x01;
-			}
-			else {
-				engine = 0x00;
-			}
+			engine = 0x00;
 		}
-		payload = engine;
+		tempPayload = engine;
 	}
-	else if(comm[3] == 0xFF){ //FLY MODE ON
+	else if(comm[3] == 0x01 && btn_detection[3] < 2){ //FLY MODE ON Bottone R1
 		opcode = FLY_ON;
 		
 		flymode = 1;
 
 	}
-	else if(comm[4] == 0xFF){ //FLY MODE OFF
-		opcode = KEEP_ALIVE;
+	else if(comm[4] == 0x01 && btn_detection[4] < 2){ //FLY MODE OFF Bottone L1
+		opcode = ACK;
 		flymode = 0;
-	}
-	else {
-		return 0;
 	}
 
 	if ((flymode) == 1){
@@ -98,27 +109,34 @@ uint8_t composePacket(DualsenseData *dualData, DronePackSending *droneData){
 
 		len = 0x0400;
 		
-		payload = (Y_left << 24) | (X_left << 16) | (Y_right << 8) | X_right;
+		tempPayload = (Y_left << 24) | (X_left << 16) | (Y_right << 8) | X_right;
+	}
+	if(droneData->lenght == 0x0400){
+		payload = malloc(4*sizeof(uint8_t));
+		payload[0] = (tempPayload >> 24) & 0xFF;
+		payload[1] = (tempPayload >> 16) & 0xFF; 
+		payload[2] = (tempPayload >> 8)  & 0xFF;
+		payload[3] = tempPayload & 0xFF; 
+	}else{
+		payload = malloc(sizeof(uint8_t));
+		payload[0] = tempPayload & 0xFF;
 	}
 
 	droneData->lenght = len;
 	droneData->opcode = opcode;
 	droneData->payload = payload;
 
+	// Controllo btn già premuti
+	for (int i = 0; i < 5; i++) {
+		if (comm[i] == 0x01 && btn_detection[i] < 2) {
+			btn_detection[i]++;
+			HAL_Delay(30);
+		} else if (comm[i] == 0x00) {
+			btn_detection[i] = 0;
+		}
+	}
+
+
 	return 1;
 
 }	
-static uint8_t translateAxisX(uint8_t X){
-	if(X > 0x7A && X < 0x86){ //confronto tra 122 e 134
-		return 0x80;
-	}
-	return X;
-}
-
-static uint8_t translateAxisY(uint8_t Y){
-	if(Y > 0x7A && Y < 0x86){ //confronto tra 122 e 134
-		return 0x80;
-	}
-	return Y;
-}
-

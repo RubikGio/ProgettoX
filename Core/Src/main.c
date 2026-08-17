@@ -41,11 +41,11 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define MAX_QUEUE 30
+#define MAX_QUEUE 10
 #define QUEUE_DISPALY 10
 #define CH376 GPIO_PIN_6
 #define MAX_BUFF_PAD 64
-#define MAX_BUFF_DRONE 36
+#define MAX_BUFF_DRONE 64
 #define DISPLAY_BUFF 1024
 /* USER CODE END PD */
 
@@ -74,13 +74,16 @@ static CircQueue QueueReceiveData;
 static CircQueue QueueDisplayController;
 static CircQueue QueueDisplayTelemetry;
 
-static uint8_t ssd1306_buffer[SSD1306_WIDTH * SSD1306_PAGES];
-static uint8_t dma_buffer[SSD1306_WIDTH * SSD1306_PAGES];
+static uint8_t ssd1306_buffer[(SSD1306_WIDTH * SSD1306_PAGES)];
+static uint8_t dma_buffer[(SSD1306_WIDTH * SSD1306_PAGES) + 1];
 
 static uint8_t dataRawJoypad[MAX_BUFF_PAD];
 static uint8_t dataRawDrone[MAX_BUFF_DRONE];
 
 static uint8_t sync_bit = 0x80; //byte usato nella richiesta del dato tipo data0 e tipo data1
+
+static uint8_t pData[50];
+
 volatile uint8_t onlyOneUSB = 0;
 
 volatile uint8_t USB_allarm = 0;
@@ -90,6 +93,12 @@ volatile uint8_t pin_alternate = 0;
 
 volatile uint8_t ssd1306_pending = 0;
 volatile uint8_t ssd1306_busy = 0;
+
+volatile UartState stato_ricezione = STATO_HEADER;
+volatile uint8_t lunghezza_payload_attesa = 0;
+
+volatile uint8_t sync_dma;
+
 
 /* USER CODE END PV */
 
@@ -158,7 +167,8 @@ int main(void)
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
 
-  //Init_SSD1306(&hi2c1);
+  Init_SSD1306(&hi2c1);
+  clearAll(ssd1306_buffer);
   //Init_SSD1306(&hi2c2);
 
   CQ_init(&QueueDualsense,&DSdata,MAX_QUEUE,sizeof(DualsenseData));
@@ -175,11 +185,15 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  DronePackSending dps;
-  DronePackRecieve dpr;
-  DualsenseData dsd;
+  static DronePackSending dps;
+  static DronePackRecieve dpr;
+  static DualsenseData dsd;
+
+  HAL_StatusTypeDef ret = 0x00;
+  HAL_UART_Receive_IT(&huart1, dataRawDrone, 9);
 
   layoutDisplay_pad(ssd1306_buffer);
+  UpdateCursor_SSD1306(&hi2c1, ssd1306_buffer, dma_buffer, &sync_dma);
 
   while (1)
   {
@@ -195,7 +209,7 @@ int main(void)
 	   cmp_enumerate = 0x00;
 	   cmp_enumerate = ch376_enumerateDevice(&hspi1);
 	   
-	   if ( cmp_enumerate == USB_INT_SUCCESS) {
+	   if (cmp_enumerate == USB_INT_SUCCESS) {
 		   HAL_Delay(40);
 
 			exit_led = 0x00;
@@ -221,15 +235,16 @@ int main(void)
 	 	USB_allarm = 0;
 
 		if(CQ_pop(&QueueDualsense,&dsd)){
-			composePacket(&dsd,&dps);
+			uint8_t ext_code = composePacket(&dsd,&dps);
 			CQ_push(&QueueSendData,&dps);
 			CQ_push(&QueueDisplayController,&dsd);
+			ssd1306_pending = 1;
 
 		}
 
 		if(CQ_pop(&QueueSendData,&dps)){
-			uint8_t pData[50];
 			uint16_t idx_len = serializePacket(&dps,pData);
+			free(dps.payload);
 			HAL_UART_Transmit_IT(&huart1,pData,idx_len);
 		}
 
@@ -246,12 +261,10 @@ int main(void)
 	  		ssd1306_pending = 0;
 	  		ssd1306_busy = 1;
 
-			memcpy(dma_buffer, ssd1306_buffer, sizeof(dma_buffer));
-
-	  		UpdateCursor_SSD1306(&hi2c1, dma_buffer);
+	  		UpdateCursor_SSD1306(&hi2c1, ssd1306_buffer, dma_buffer, &sync_dma);
 	  	}
 
-		if (CQ_pop(&QueueReceiveData,&dpr)){
+		 if (CQ_pop(&QueueReceiveData,&dpr)){
 			// trasmissione verso i display dati drone
 		}
 
@@ -259,7 +272,6 @@ int main(void)
   }
   /* USER CODE END 3 */
 }
-
 
 /**
   * @brief System Clock Configuration
@@ -330,7 +342,7 @@ static void MX_I2C1_Init(void)
 
   /* USER CODE END I2C1_Init 1 */
   hi2c1.Instance = I2C1;
-  hi2c1.Init.Timing = 0x00201D2B;
+  hi2c1.Init.Timing = 0x0010020A;
   hi2c1.Init.OwnAddress1 = 0;
   hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
   hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
@@ -463,7 +475,7 @@ static void MX_USART1_UART_Init(void)
 
   /* USER CODE END USART1_Init 1 */
   huart1.Instance = USART1;
-  huart1.Init.BaudRate = 96000;
+  huart1.Init.BaudRate = 115200;
   huart1.Init.WordLength = UART_WORDLENGTH_8B;
   huart1.Init.StopBits = UART_STOPBITS_1;
   huart1.Init.Parity = UART_PARITY_NONE;
@@ -559,10 +571,10 @@ static void MX_DMA_Init(void)
 
   /* DMA interrupt init */
   /* DMA1_Channel4_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Channel4_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(DMA1_Channel4_IRQn, 2, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel4_IRQn);
   /* DMA1_Channel6_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Channel6_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(DMA1_Channel6_IRQn, 2, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel6_IRQn);
 
 }
@@ -633,16 +645,20 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(GPIOF, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
-  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 3, 0);   // linee 5-9 condividono questo vettore
+  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 0, 0);   // linee 5-9 condividono questo vettore
   HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
-
 void HAL_I2C_MasterTxCpltCallback(I2C_HandleTypeDef *hi2c1) { // Primo display per il drone 
 	if (hi2c1->Instance == I2C1) {
-		ssd1306_busy = 1;
+		if (sync_dma == SSD_RESET){
+			sync_dma = SSD_DATA;
+			HAL_I2C_Master_Transmit_DMA(hi2c1, SSD1306_I2C_ADDR, dma_buffer, 1025);
+		}else{
+			ssd1306_busy = 0;
+		}
 	}
 }
 
@@ -652,16 +668,32 @@ void HAL_I2C_MasterTxCpltCallback(I2C_HandleTypeDef *hi2c1) { // Primo display p
 	}
 }*/
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
-    if (huart->Instance == USART1) {
-        HAL_UART_Receive_IT(&huart1, dataRawDrone, MAX_BUFF_DRONE);
-		Rx_allarm = 1;
-    }
-}
+	if (huart->Instance == USART1) {
+		if (stato_ricezione == STATO_HEADER) {
+			lunghezza_payload_attesa = dataRawDrone[4];
+			uint8_t byte_mancanti = lunghezza_payload_attesa + 1;
 
+			stato_ricezione = STATO_PAYLOAD;
+
+			HAL_UART_Receive_IT(&huart1, &dataRawDrone[6], byte_mancanti);
+		}
+		else if (stato_ricezione == STATO_PAYLOAD) {
+			Rx_allarm = 1;
+			stato_ricezione = STATO_HEADER;
+			HAL_UART_Receive_IT(&huart1, dataRawDrone, 6);
+		}
+	    }
+}
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 	if (GPIO_Pin == CH376){
 		USB_allarm = 1;
 	}
+}
+
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
+    if (huart->Instance == USART1) {
+        volatile uint32_t errore = huart->ErrorCode;
+    }
 }
 
 void takeUSBdata() {
