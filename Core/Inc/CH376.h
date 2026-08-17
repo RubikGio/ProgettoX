@@ -7,44 +7,18 @@
 #include "stm32f3xx_hal.h"
 
 enum USB_STATE{
-	USB_RESET = 0,
-	USB_RESET_HOST = 1,
-	USB_CONNECTION = 2,
-	USB_GET_DEVICE_DESCRIPTOR = 3,
-	USB_SET_ADDRESS = 4,
-	USB_GET_CONFIG_DESCRIPTOR = 5,
-	USB_GET_FULL_DESCRIPTOR = 6,
-	USB_PARSING_CFG = 7,
-	USB_SET_CONFIGURATION = 8,
-	USB_HID_GET_REPORT = 9,
-	USB_DONE = 10
+	USB_RESET,
+	USB_RESET_HOST,
+	USB_CONNECTION,
+	USB_GET_DEVICE_DESCRIPTOR,
+	USB_SET_ADDRESS,
+	USB_GET_CONFIG_DESCRIPTOR,
+	USB_GET_FULL_DESCRIPTOR,
+	USB_PARSING_CFG,
+	USB_SET_CONFIGURATION,
+	USB_HID_GET_REPORT,
+	USB_DONE
 };
-
-typedef struct __attribute__((packed))
-{
-    uint8_t  bLength;
-    uint8_t  bDescriptorType;
-
-    uint16_t bcdUSB;
-
-    uint8_t  bDeviceClass;
-    uint8_t  bDeviceSubClass;
-    uint8_t  bDeviceProtocol;
-
-    uint8_t  bMaxPacketSize0;
-
-    uint16_t idVendor;
-    uint16_t idProduct;
-
-    uint16_t bcdDevice;
-
-    uint8_t  iManufacturer;
-    uint8_t  iProduct;
-    uint8_t  iSerialNumber;
-
-    uint8_t  bNumConfigurations;
-
-} USB_DeviceDescriptor;
 
 typedef struct
 {
@@ -87,6 +61,7 @@ typedef struct
 #define USB_INVALID_PARSE_DESCRIPTOR 0xF6
 #define USB_INVALID_SIZE_HID 0xF5
 #define USB_ERROR_GET_HID 0xF4
+#define USB_ERROR_CONNECTION 0xF3
 
 // OUTPUT COMMAND DUALSENSE 
 #define DS_REPORT_OUTPUT_SIZE 63

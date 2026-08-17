@@ -33,9 +33,13 @@
 #define EN_PUMP 0x14
 #define DISPLAY_ON 0xAF
 
+enum state_dma{
+	SSD_RESET,
+	SSD_DATA
+};
+
 void Init_SSD1306(I2C_HandleTypeDef *);
-void WriteReg_SSD1306(I2C_HandleTypeDef *, uint8_t);
-void UpdateCursor_SSD1306(I2C_HandleTypeDef *, uint8_t *);
+void UpdateCursor_SSD1306(I2C_HandleTypeDef *, uint8_t *, uint8_t *, volatile uint8_t *);
 void ClearArea_SSD1306(uint8_t *, uint8_t, uint8_t, uint8_t);
 void String_SSD1306(uint8_t, uint8_t, uint8_t *,const char *);
 void Char_SSD1306(uint8_t, uint8_t, uint8_t *,char);
