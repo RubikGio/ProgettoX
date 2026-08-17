@@ -56,6 +56,7 @@ static void event_handler(void* arg, esp_event_base_t event_base,
 }
 
 static void wifi_connection(void){
+
     s_wifi_event_group = xEventGroupCreate();
 
     ESP_ERROR_CHECK(esp_netif_init());
@@ -73,15 +74,15 @@ static void wifi_connection(void){
 
     wifi_config_t wifi_config = {
         .sta = {
-            .ssid = "EccomiQua",
-            .password = "giovanni",
-            .threshold.authmode = WIFI_AUTH_WPA2_PSK,
+            .ssid = "HF GPS5G_80330308",
+            //.password = "giovanni",
+            .threshold.authmode = WIFI_AUTH_OPEN,
         },
     };
-
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA,&wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
+	ESP_ERROR_CHECK(esp_wifi_set_band_mode(WIFI_BAND_MODE_AUTO));
 }   
 
 void app_main(void)
@@ -102,12 +103,12 @@ void app_main(void)
             pdFALSE, pdFALSE, portMAX_DELAY);
 
     if (bits & WIFI_CONNECTED_BIT){
-        ESP_LOGI(TAG, "Connessione stabilita. Avvio stack UDP...");
-    		current_state = SYSTEM_CONNECTED;
+        ESP_LOGE(TAG, "Connessione stabilita. Avvio stack UDP...");
+    	current_state = SYSTEM_CONNECTED;
 
-        queueRx = xQueueCreate(70, sizeof(msg_t));
-        queueTx = xQueueCreate(70, sizeof(msg_t));
-		queueHuart = xQueueCreate(30, sizeof(msg_t));
+        queueRx = xQueueCreate(1, sizeof(msg_t));
+        queueTx = xQueueCreate(10, sizeof(msg_t));
+		queueHuart = xQueueCreate(1, sizeof(msg_t));
 
         if (queueRx == NULL || queueTx == NULL) {
             ESP_LOGE(TAG, "Errore nella creazione delle code UART");
@@ -125,11 +126,11 @@ void app_main(void)
 
             struct sockaddr_in local_addr;
             local_addr.sin_family = AF_INET;
-            local_addr.sin_port = htons(3456);
+            local_addr.sin_port = htons(55555);
             local_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
-            setting_socket(&sock_send, SOCK_SENDER, dest_addr);
-            setting_socket(&sock_recv, SOCK_RECEIVER, local_addr);
+            setting_socket(&sock_send, SOCK_SENDER, dest_addr, local_addr);
+            setting_socket(&sock_recv, SOCK_RECEIVER, local_addr, local_addr);
 
             // Allocazione memoria
             udp_datas_t *args_send = malloc(sizeof(udp_datas_t));
@@ -146,15 +147,20 @@ void app_main(void)
 				vTaskDelay(pdMS_TO_TICKS(1000));
 				setting_uart_trx(queueRx, queueTx, queueHuart);
                 udp_tasks_created = true;
+				
 				while (1){
-					invio_pacchetto_test(queueTx);
-					vTaskDelay(pdMS_TO_TICKS(2000));
+					vTaskDelay(pdMS_TO_TICKS(1000));
 				}
+			free(args_send);
+			free(args_recv);
             } else {
+				free(args_send);
+				free(args_recv);
                 ESP_LOGE(TAG, "Errore di allocazione memoria per UDP");
             }
         }
-    } else if (bits & WIFI_FAIL_BIT){
+    } 
+	else if (bits & WIFI_FAIL_BIT){
         ESP_LOGE(TAG, "Connessione fallita. Impossibile avviare UDP.");
     }
 }

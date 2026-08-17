@@ -9,16 +9,11 @@
 #include "UART_drone.h"
 #include "UDP_Connection.h"
 
-#define MIO_UART UART_NUM_1
-#define TX_TO_ST 5
-#define ST_TO_RX 4
-
-#define BUFF_SIZE 1024
-
 const char* TAG_R = "UART RX:";
 const char* TAG_T = "UART TX:";
-static const char *TAG_TEST = "UART TEST";
+const char *TAG_TEST = "UART TEST";
 
+volatile int pck_lock = 0;
 
 static void uart_tx_task(void *pvParameters){
 	QueueHandle_t queueTx = (QueueHandle_t) pvParameters;
@@ -26,122 +21,104 @@ static void uart_tx_task(void *pvParameters){
 	while (1)
 	{	
 		if(xQueueReceive(queueTx,&msg,portMAX_DELAY) == pdPASS){
-			ESP_LOGI(TAG_T, "Prelevato pacchetto dalla coda! Lunghezza: %u byte", (unsigned) msg.lenght);
+			ESP_LOGI(TAG_T, "Prelevato pacchetto dalla coda! Lunghezza: %u byte", (unsigned) msg.len);
 			
-			int bytes_sended = uart_write_bytes(MIO_UART, (const char *) msg.data, msg.lenght);
+			int bytes_sended = uart_write_bytes(MIO_UART, (const char *) msg.buffer, msg.len);
 
-			if(bytes_sended != msg.lenght){
-				ESP_LOGW(TAG_T, "Attenzione: inviati solo %d byte su %u", bytes_sended, (unsigned) msg.lenght);
+			if(bytes_sended != msg.len){
+				ESP_LOGW(TAG_T, "Attenzione: inviati solo %d byte su %u", bytes_sended, (unsigned) msg.len);
 			}
-
-			free(msg.data);
 		}
 			
 	}
 }
 
-void invio_pacchetto_test(QueueHandle_t queueTx){
-    // Pacchetto di test: header (id_send 2 byte) + opcode + length(2) + payload + checksum
-    uint8_t opcode = 0x01;
-    uint8_t payload_bytes[3] = {0x02, 0x02, 0x02};
+void invio_pacchetto_test(QueueHandle_t queueTx) {
+    uint8_t opcode = 0x64;
+    uint8_t payload_bytes[1] = {0x01};
     uint16_t payload_len = sizeof(payload_bytes);
+    size_t tt_pack_size = 6 + payload_len + 1;
 
-    size_t tt_pack_size = 5 + payload_len + 1;  // stesso schema che usi in uart_rx_task
-
-    uint8_t *buff = malloc(tt_pack_size);
-    if (buff == NULL) {
-        ESP_LOGE(TAG_TEST, "Malloc fallita per pacchetto di test");
+    if (tt_pack_size > sizeof(((msg_t*)0)->buffer)) {
+        ESP_LOGE(TAG_TEST, "Pacchetto troppo grande per il buffer inline");
         return;
     }
 
+    msg_t msg = {0};
+    msg.len = tt_pack_size;
+
     size_t idx = 0;
-    buff[idx++] = 0x02;   // id_send[0]
-    buff[idx++] = 0x02;   // id_send[1]
-    buff[idx++] = opcode;
-    buff[idx++] = (uint8_t)(payload_len & 0xFF);        // LSB
-    buff[idx++] = (uint8_t)(payload_len >> 8);           // MSB
-    memcpy(&buff[idx], payload_bytes, payload_len);
+    msg.buffer[idx++] = 0x46;
+    msg.buffer[idx++] = 0x48;
+    msg.buffer[idx++] = 0x3E;
+    msg.buffer[idx++] = opcode;
+    msg.buffer[idx++] = (uint8_t)(payload_len & 0xFF);
+    msg.buffer[idx++] = (uint8_t)(payload_len >> 8);
+    memcpy(&msg.buffer[idx], payload_bytes, payload_len);
     idx += payload_len;
 
-    // checksum XOR sul payload (coerente con checkSum lato STM32)
     uint8_t check = 0;
     for (size_t i = 0; i < payload_len; i++) {
         check ^= payload_bytes[i];
     }
+    msg.buffer[idx] = check;  // ← rimosso il idx++ spurio che avevi
 
-    buff[idx++] = 0xAA;
-
-    msg_t msg;
-    msg.data = buff;
-    msg.lenght = tt_pack_size;
-
-	ESP_LOGI("QueueSendTest", "Pacchetto inviato (%u byte):", (unsigned)msg.lenght);
-	for (size_t i = 0; i < msg.lenght ; i++) {
-		printf("%02X ", msg.data[i]);
-	}
-	printf("\n");
     if (xQueueSend(queueTx, &msg, pdMS_TO_TICKS(100)) != pdPASS) {
-        ESP_LOGW(TAG_TEST, "Coda TX piena, pacchetto di test scartato");
-        free(buff);
+        ESP_LOGW(TAG_TEST, "Coda TX piena, pacchetto scartato");
     } else {
-        ESP_LOGI(TAG_TEST, "Pacchetto di test inviato in coda, lunghezza: %u", (unsigned)tt_pack_size);
+        ESP_LOGI(TAG_TEST, "Pacchetto inviato, lunghezza: %u", (unsigned)tt_pack_size);
     }
+
 }
 
-static void uart_rx_task(void *pvParameters){
-	uint8_t header[6];
-	QueueHandle_t queueRx = (QueueHandle_t) pvParameters;
+static void uart_rx_task(void *pvParameters) {
+    uint8_t header[6];
+    QueueHandle_t queueRx = (QueueHandle_t) pvParameters;
 
-	while (1)
-	{
-		int header_len = uart_read_bytes(MIO_UART, header, 6, portMAX_DELAY);
+    while (1) {
+        int header_len = uart_read_bytes(MIO_UART, header, 6, portMAX_DELAY);
 
+		if (header[3] != 0x65)
 		ESP_LOGI(TAG_R, "Header ricevuto (%d byte): %02X %02X %02X %02X %02X %02X",
-                     header_len, header[0], header[1], header[2], header[3], header[4], header[5]);
-		if (header_len == 6){
-			uint8_t payload_len = header[4];
+					header_len, header[0], header[1], header[2], header[3], header[4], header[5]);
 
-			if (payload_len > 0){
-				size_t tt_pack_size = 6 + payload_len + 1;
+        if (header_len == 6) {
+            uint8_t payload_len = header[4];
 
-				uint8_t *full_pack = malloc(tt_pack_size);
+            if (payload_len > MAX_BUFF) {
+                ESP_LOGE(TAG_R, "Payload troppo grande (%u), scarto", payload_len);
+                uart_flush_input(MIO_UART);
+                continue;
+            }
 
-				if(full_pack != NULL){
-					memcpy(full_pack,header,6);
+            if (payload_len > 0) {
+                size_t tt_pack_size = 6 + payload_len + 1;
 
-					int bytes_read = uart_read_bytes(MIO_UART,full_pack + 6, payload_len + 1, pdMS_TO_TICKS(50));
+                msg_t msg = {0};
+                msg.len = tt_pack_size;
+                memcpy(msg.buffer, header, 6);
 
-					if (bytes_read == payload_len + 1){
-						msg_t msg;
-						msg.data = full_pack;
-						msg.lenght = tt_pack_size;
-						
-						for (size_t i = 0; i < tt_pack_size; i++) {
-                            ESP_LOGI("UART RX: ","%02X ", full_pack[i]);
-                        }
-						printf("\n");
+                int bytes_read = uart_read_bytes(MIO_UART, msg.buffer + 6,
+                                                 payload_len + 1,
+                                                 pdMS_TO_TICKS(50));
 
-						if (xQueueSend(queueRx, &msg, 0) == pdPASS)
-						{
-							ESP_LOGI(TAG_R,"Invio dati per coda UDP: %p", (void*)full_pack);
-							vTaskDelay(pdMS_TO_TICKS(200));
-						}
-						else{
-							ESP_LOGW(TAG_R,"Coda UDP piena!!");
-							free(full_pack);
-						}
-					}else{
-						ESP_LOGE(TAG_R,"Errore dato da buttare (interruzione comunicazione)");
-						free(full_pack);
-						uart_flush_input(MIO_UART);
+                if (bytes_read == payload_len + 1) {
+
+					if(header[3] == ENGINE || header[3] == MODE || header[3] == FLY_ON){
+						xQueueOverwrite(queueRx, &msg);
+						pck_lock = 1;
 					}
-				}
-			}
-		}
 
-	}
-	
-	
+					if(pck_lock == 0){
+                    	xQueueOverwrite(queueRx, &msg);
+					}
+                } else {
+                    ESP_LOGE(TAG_R, "Errore ricezione, pacchetto scartato");
+                    uart_flush_input(MIO_UART);
+                }
+            }
+        }
+    }
 }
 
 void setting_uart_trx(QueueHandle_t queueRx, QueueHandle_t queueTx, QueueHandle_t queueHuart){

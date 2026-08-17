@@ -1,37 +1,48 @@
 #include "UDP_Connection.h"
 #include "UART_drone.h"
 
-void setting_socket(int *sock, sock_type type, struct sockaddr_in dest_addr){	
+void setting_socket(int *sock, sock_type type, struct sockaddr_in dest_addr,struct sockaddr_in local_addr){	
 
-	*sock = socket(AF_INET, SOCK_DGRAM, 0);
+	*sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
 	if (*sock < 0) {
 		ESP_LOGE("Socket setting", "Unable to create socket: errno %d", errno);
 		return;
 	}
 
-	// Set timeout
-	struct timeval timeout;
-	timeout.tv_sec = 10;
-	timeout.tv_usec = 0;
-	setsockopt (*sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
+	 // Abilita riuso della porta su entrambe
+    int reuse = 1;
+    setsockopt(*sock, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+    setsockopt(*sock, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse));
 
-	if (type == SOCK_RECEIVER){
-		int err = bind(*sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
-			if (err < 0) {
-					ESP_LOGE("Socket setting", "Socket unable to bind: errno %d", errno);
-				}
-			ESP_LOGI("Socekt setting","Binding succesfull: %d", *sock);
-		}
-	
-	ESP_LOGI("Sock setting", "Socket created, sending to %s:%d", HOST_IP, PORT);
+    struct timeval timeout = { .tv_sec = 10, .tv_usec = 0 };
+    setsockopt(*sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 
+    // Bind su local_addr per ENTRAMBE le socket
+    int err = bind(*sock, (struct sockaddr *)&local_addr, sizeof(local_addr));
+    if (err < 0) {
+        ESP_LOGE("Socket setting", "Socket unable to bind: errno %d", errno);
+        close(*sock);
+        *sock = -1;
+        return;
+    }
+
+	if (type == SOCK_SENDER) {
+        ESP_LOGI("Socket setting", "TX pronta — src: 55555 → dst: %s:%d",
+                 HOST_IP, ntohs(dest_addr.sin_port));
+    } else {
+        ESP_LOGI("Socket setting", "RX pronta — in ascolto su porta: %d",
+                 ntohs(local_addr.sin_port));
+    }
 }
 
 static msg_t take_data(QueueHandle_t queue){ //RX
 	msg_t msg;
-	msg.data = NULL;
-	msg.lenght = 0;
-	if(xQueueReceive(queue,&msg,portMAX_DELAY) == pdPASS){
+	msg.len = 0;
+	if(xQueueReceive(queue,&msg,0) == pdPASS){
+		if (msg.buffer[3] == ENGINE || msg.buffer[3] == MODE){
+		ESP_LOGW("MESSAGGIO SEND", "messaggio in arrivo: %X", msg.buffer[3]); 
+		pck_lock = 0;
+		}
 		return msg;
 	}
 	return msg;
@@ -45,23 +56,21 @@ static void udp_send_task(void *pvParameters){
 
 	while (1) {
 		msg_t msg = take_data(queue);	
-			if (msg.data != NULL && msg.lenght > 0){
-				for (size_t i = 0; i < msg.lenght; i++) {
-				ESP_LOGI("SOCK_SEND: ","%02X ", msg.data[i]);
-			}	
-			int err = sendto(sock, msg.data, msg.lenght, 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+			if (msg.len > 0){
+				/* for (size_t i = 0; i < msg.len; i++) {
+				ESP_LOGI("SOCK_SEND: ","%02X ", msg.buffer[i]); 
+			}	*/
+			int err = sendto(sock, msg.buffer, msg.len, 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
 			if (err < 0) {
 				ESP_LOGE("Sock send", "Error occurred during sending: errno %d", errno);
 			} else {
-				ESP_LOGI("Sock send", "Message sent");
+				//ESP_LOGI("Sock send", "Message sent");
 			}
-
-			free(msg.data);
 		} else {
 			ESP_LOGE("Sock send","Dato corrotto o coda vuota");
 		}
 
-		vTaskDelay(pdMS_TO_TICKS(400));
+		vTaskDelay(45);
 	}
 	
 	if (sock != -1) {
@@ -70,7 +79,6 @@ static void udp_send_task(void *pvParameters){
 		close(sock);
 	}
 
-	free(data);
 	vTaskDelete(NULL);
 
 }
@@ -87,42 +95,28 @@ static void udp_recv_task(void *pvParameters){
 	{
 		ESP_LOGI("Sock recv", "Waiting for data");
 
-		uint8_t *rx_buffer = malloc(MAX_UDP_RX_BUFFER);
-        if (rx_buffer == NULL) {
-            ESP_LOGE("Sock recv", "Impossibile allocare memoria!");
-            vTaskDelay(100);
-            continue;
-        }
+		uint8_t rx_buffer[MAX_UDP_RX_BUFFER];
 
 		int len = recvfrom(sock, rx_buffer, MAX_UDP_RX_BUFFER, 0, (struct sockaddr *)&source_addr, &socklen);
 
 		if (len < 0) {
 			ESP_LOGE("Sock recv ", "recvfrom failed: errno %d", errno);
-			free(rx_buffer);
 			continue;
 			
 		}else if (len > 0){
 			msg_t msg;
-			msg.data = rx_buffer;
-			msg.lenght = len;
+			memcpy(msg.buffer, rx_buffer, len);
+			msg.len = len;
 			if (xQueueSend(queue, &msg, 0) == pdPASS){
-				for (size_t i = 0; i < msg.lenght; i++ ){
-				ESP_LOGI("Sock recv: ","%c",msg.data[i]);
+				/* for (size_t i = 0; i < msg.len; i++ ){
+				ESP_LOGI("Sock recv: ","%X",msg.buffer[i]); }*/
 			}
 			}
-			else{
-				free(rx_buffer);
-			}
-		}else{
-			free(rx_buffer);
-		}
-
 		if (source_addr.ss_family == AF_INET) {
 			struct sockaddr_in *source = (struct sockaddr_in *)&source_addr;
 			ESP_LOGI("Sock recv", "Source %s:%d",
 					inet_ntoa(source->sin_addr), ntohs(source->sin_port));
-		}
-
+			}
 	}
 
 	if (sock != -1) {
@@ -131,15 +125,14 @@ static void udp_recv_task(void *pvParameters){
             close(sock);
         }
 	
-    vTaskDelete(NULL);
-	
+    vTaskDelete(NULL);	
 }
 
 void udp_start_tasks(udp_datas_t *dati_per_send, udp_datas_t *dati_per_rcv) {
 
 	if (dati_per_send != NULL) {
         xTaskCreate(
-            udp_send_task,      // La tua funzione static
+            udp_send_task,      // La funzione static
             "udp_send",         // Nome per il debug
             2048,               // Stack in byte
             (void*)dati_per_send, // Parametri passati al task
@@ -151,10 +144,10 @@ void udp_start_tasks(udp_datas_t *dati_per_send, udp_datas_t *dati_per_rcv) {
 
     if (dati_per_rcv != NULL) {
         xTaskCreate(
-            udp_recv_task,      // La tua funzione static
+            udp_recv_task,      // La funzione static
             "udp_recv",         // Nome per il debug
             2048,               // Stack in byte
-			(void*)dati_per_rcv, // Passiamo il puntatore ai dati di ricezione
+			(void*)dati_per_rcv, // puntatore ai dati di ricezione
             4,                  // Priorità
             NULL                // Handle
         );

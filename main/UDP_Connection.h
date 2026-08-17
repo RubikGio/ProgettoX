@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-#define HOST_IP "10.253.101.147"
+#define HOST_IP "192.168.80.1"
 #define PORT 3456
 #define MAX_UDP_RX_BUFFER 64
 
@@ -25,7 +25,7 @@ typedef struct {
 	QueueHandle_t queue;
 } udp_datas_t;
 
-void setting_socket(int *sock, sock_type type, struct sockaddr_in dest_addr);
+void setting_socket(int *sock, sock_type type, struct sockaddr_in dest_addr, struct sockaddr_in local_addr);
 void udp_start_tasks(udp_datas_t *send_data, udp_datas_t *recv_data);
 
 #ifdef __cplusplus
