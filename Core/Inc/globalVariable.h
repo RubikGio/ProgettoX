@@ -7,6 +7,8 @@
 static const unsigned char id_send[] = {0x46, 0x48, 0x3C};
 static const unsigned char id_recv[] = {0x46, 0x48, 0x3E};
 
+#define MAX_PAYLOAD 4
+
 typedef struct{
 	// sticks 
 	uint8_t X_axis_left; 
@@ -58,7 +60,7 @@ typedef struct {
 	uint16_t lenght;
 
 	// payload
-	uint8_t *payload;
+	uint8_t payload[MAX_PAYLOAD];
 
 	// checksum
 	uint8_t checksum;

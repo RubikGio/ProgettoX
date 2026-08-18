@@ -36,7 +36,10 @@ extern "C" {
 
 /* Exported types ------------------------------------------------------------*/
 /* USER CODE BEGIN ET */
-
+typedef enum {
+    STATO_HEADER,
+    STATO_PAYLOAD
+} UartState;
 /* USER CODE END ET */
 
 /* Exported constants --------------------------------------------------------*/
