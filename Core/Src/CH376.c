@@ -769,6 +769,7 @@ uint8_t ch376_setDualsenseLED(SPI_HandleTypeDef *hspi1){
 	02 00 02 00 00
 	FF FF FF*/
 
+
     report[0]  = DS_OUTPUT_REPORT;
     report[1]  = 0xFF;       
 	report[2]  = 0xF7;

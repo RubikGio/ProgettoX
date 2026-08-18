@@ -56,7 +56,6 @@ uint8_t composePacket(DualsenseData *dualData, DronePackSending *droneData){
 	
 	uint8_t opcode = ACK;
 	uint32_t tempPayload = 0x00000001;
-	uint8_t *payload;
 
 	uint8_t X_left = 0x00;
 	uint8_t Y_left = 0x00;
@@ -66,6 +65,11 @@ uint8_t composePacket(DualsenseData *dualData, DronePackSending *droneData){
 
 	uint16_t len = 0x0100;
 	uint8_t engine = 0x01;
+
+	droneData->payload[0] = 0;
+	droneData->payload[1] = 0;
+	droneData->payload[2] = 0;
+	droneData->payload[3] = 0;
 
 	if (comm[0] == 0x01 && btn_detection[0] < 2){ //OP MODE Bottone triangolo
 		opcode = USE_MODE;
@@ -112,19 +116,17 @@ uint8_t composePacket(DualsenseData *dualData, DronePackSending *droneData){
 		tempPayload = (Y_left << 24) | (X_left << 16) | (Y_right << 8) | X_right;
 	}
 	if(droneData->lenght == 0x0400){
-		payload = malloc(4*sizeof(uint8_t));
-		payload[0] = (tempPayload >> 24) & 0xFF;
-		payload[1] = (tempPayload >> 16) & 0xFF; 
-		payload[2] = (tempPayload >> 8)  & 0xFF;
-		payload[3] = tempPayload & 0xFF; 
+		droneData->payload[0] = (tempPayload >> 24) & 0xFF;
+		droneData->payload[1] = (tempPayload >> 16) & 0xFF;
+		droneData->payload[2] = (tempPayload >> 8)  & 0xFF;
+		droneData->payload[3] = tempPayload & 0xFF;
 	}else{
-		payload = malloc(sizeof(uint8_t));
-		payload[0] = tempPayload & 0xFF;
+		droneData->payload[0] = tempPayload & 0xFF;
 	}
+
 
 	droneData->lenght = len;
 	droneData->opcode = opcode;
-	droneData->payload = payload;
 
 	// Controllo btn già premuti
 	for (int i = 0; i < 5; i++) {
@@ -135,7 +137,6 @@ uint8_t composePacket(DualsenseData *dualData, DronePackSending *droneData){
 			btn_detection[i] = 0;
 		}
 	}
-
 
 	return 1;
 

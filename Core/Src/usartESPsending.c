@@ -12,6 +12,7 @@ static uint8_t checksum(const uint8_t *payload, uint16_t lenght){
 
 uint16_t serializePacket(const DronePackSending *dps, uint8_t *outBuff){
 	uint16_t index = 0;
+	uint8_t len = 0x00;
 
 	if (dps == NULL || outBuff == NULL || dps->payload == NULL){
 		return 0;
@@ -22,14 +23,15 @@ uint16_t serializePacket(const DronePackSending *dps, uint8_t *outBuff){
 	}
 	outBuff[index++] = dps->opcode;
 	
-	outBuff[index++] =  (uint8_t)(dps->lenght & 0xFF);
-	outBuff[index++] =  (uint8_t)(dps->lenght >> 8);
+	outBuff[index++] =  (uint8_t)((dps->lenght >> 8) & 0xFF);
+	outBuff[index++] = 0x00; // --> sono 2 byte il campo lenght ma il secondo sempre 0
+	len = (uint8_t)(dps->lenght >> 8);
 
-	for(size_t i = 0; i < dps->lenght; i++){
+	for(size_t i = 0; i < len; i++){
 		outBuff[index++] = (uint8_t)(dps->payload[i]);
 	}
 
-	outBuff[index] = checksum(&outBuff[6], index - 6);
+	outBuff[index] = checksum(&outBuff[3], index - 3);
 	index++;
 
 	return index;

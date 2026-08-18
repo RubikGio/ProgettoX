@@ -99,6 +99,8 @@ volatile uint8_t lunghezza_payload_attesa = 0;
 
 volatile uint8_t sync_dma;
 
+uint32_t timer_display = 0;
+
 
 /* USER CODE END PV */
 
@@ -244,13 +246,16 @@ int main(void)
 
 		if(CQ_pop(&QueueSendData,&dps)){
 			uint16_t idx_len = serializePacket(&dps,pData);
-			free(dps.payload);
-			HAL_UART_Transmit_IT(&huart1,pData,idx_len);
+			if (huart1.gState == HAL_UART_STATE_READY) {
+				HAL_UART_Transmit_IT(&huart1,pData,idx_len);
+			}
 		}
 
 		if(CQ_pop(&QueueDisplayController,&dsd)){
+			if (hi2c1.State == HAL_I2C_STATE_READY){
 			updateAll(dsd,&fly_mode,ssd1306_buffer);
 			ssd1306_pending = 1;
+			}
 		}
 	}
 	  	if (Rx_allarm == 1){
@@ -264,9 +269,21 @@ int main(void)
 	  		UpdateCursor_SSD1306(&hi2c1, ssd1306_buffer, dma_buffer, &sync_dma);
 	  	}
 
-		 if (CQ_pop(&QueueReceiveData,&dpr)){
-			// trasmissione verso i display dati drone
-		}
+	  	if (ssd1306_busy == 1){
+	  		if (HAL_GetTick() - timer_display > 2000){
+	  			HAL_I2C_DeInit(&hi2c1);
+				HAL_I2C_Init(&hi2c1);
+
+				Init_SSD1306(&hi2c1);
+
+				ssd1306_busy = 0;
+				sync_dma = SSD_RESET;
+
+				timer_display = HAL_GetTick();
+	  			}
+	  		}else{
+	  			timer_display = HAL_GetTick();
+	  		}
 
 }
   }
@@ -651,7 +668,7 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-void HAL_I2C_MasterTxCpltCallback(I2C_HandleTypeDef *hi2c1) { // Primo display per il drone 
+void HAL_I2C_MasterTxCpltCallback(I2C_HandleTypeDef *hi2c1) { // Primo display per il drone
 	if (hi2c1->Instance == I2C1) {
 		if (sync_dma == SSD_RESET){
 			sync_dma = SSD_DATA;
@@ -660,6 +677,15 @@ void HAL_I2C_MasterTxCpltCallback(I2C_HandleTypeDef *hi2c1) { // Primo display p
 			ssd1306_busy = 0;
 		}
 	}
+}
+
+void HAL_I2C_ErrorCallback(I2C_HandleTypeDef *hi2c) {
+    if (hi2c->Instance == I2C1) { // L'I2C del display
+
+        ssd1306_busy = 0;
+
+        sync_dma = SSD_DATA;
+    }
 }
 
 /* void HAL_I2C_MasterTxCpltCallback(I2C_HandleTypeDef *hi2c2) { // Secondo display del controller
